@@ -1,6 +1,7 @@
 import torch
 import triton
 import triton.language as tl
+import numpy as np
 
 
 def get_autotune_config():
@@ -55,19 +56,29 @@ def nrm2_kernel(
     block_start = pid * BLOCK_SIZE
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
-    x = tl.load(x_ptr + offsets, mask=mask)
     
-    partial = tl.sum(x * x)  # sum of squares for a program's assigned chunk
-    total = tl.sum(partial[None], axis=0)  # sum scalars from all programs
-    output = tl.sqrt(total)  # square root of total 
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.device_print("load x", x)
 
+    exp = x * x
+    tl.device_print("exp", exp)
+
+    sum_of_squares = tl.sum(exp)  # sum of squares for a program's assigned chunk
+    tl.device_print("sum_of_squares", sum_of_squares)
+
+    total = tl.sum(sum_of_squares[None], axis=0)  # sum scalars from all programs
+    tl.device_print("total", total)
+
+    output = tl.sqrt(total)  # square root of total 
+    tl.device_print("output", output)
+    
     tl.store(output_ptr, output)
 
 
 def nrm2(x: torch.Tensor):
-    output = torch.Tensor()  # output is a single scalar value
+    output = torch.empty(())  # output is a single scalar value
     assert x.device == output.device
-    n_elements = output.numel()
+    n_elements = x.numel()
 
     def grid(META): return (triton.cdiv(n_elements, META['BLOCK_SIZE']), )
 
