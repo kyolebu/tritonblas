@@ -4,45 +4,45 @@ import triton.language as tl
 import numpy as np
 
 
-def get_autotune_config():
-    return [
-        triton.Config(
-            {
-                "BLOCK_SIZE": 1024,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE": 512,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE": 256,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE": 128,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE": 64,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE": 32,
-            },
-        ),
-    ]
+# def get_autotune_config():
+#     return [
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE": 1024,
+#             },
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE": 512,
+#             },
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE": 256,
+#             },
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE": 128,
+#             },
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE": 64,
+#             },
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE": 32,
+#             },
+#         ),
+#     ]
 
 
-@triton.autotune(
-    configs=get_autotune_config(),
-    key=["n_elements"]
-)
+# @triton.autotune(
+#     configs=get_autotune_config(),
+#     key=["n_elements"]
+# )
 
 
 @triton.jit
@@ -58,21 +58,15 @@ def nrm2_kernel(
     mask = offsets < n_elements
     
     x = tl.load(x_ptr + offsets, mask=mask)
-    tl.device_print("load x", x)
+    #tl.device_print("load x", x)
 
     exp = x * x
     tl.device_print("exp", exp)
 
     sum_of_squares = tl.sum(exp)  # sum of squares for a program's assigned chunk
     tl.device_print("sum_of_squares", sum_of_squares)
-
-    total = tl.sum(sum_of_squares[None], axis=0)  # sum scalars from all programs
-    tl.device_print("total", total)
-
-    output = tl.sqrt(total)  # square root of total 
-    tl.device_print("output", output)
     
-    tl.store(output_ptr, output)
+    tl.atomic_add(output_ptr, sum_of_squares)
 
 
 def nrm2(x: torch.Tensor):
@@ -85,7 +79,9 @@ def nrm2(x: torch.Tensor):
     nrm2_kernel[grid](
         x,
         output,
-        n_elements
+        n_elements,
+        BLOCK_SIZE=128
     )
-    
-    return output
+    result = torch.sqrt(output)
+    print(result)
+    return result

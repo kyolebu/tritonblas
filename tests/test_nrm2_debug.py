@@ -3,7 +3,7 @@ import pytest
 import tritonblas as tb
 
 def test_nrm2_small_deterministic():
-    x = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float32)
+    x = torch.randn(1024, dtype=torch.float32)
 
     expected_norm = torch.linalg.norm(x) # Use PyTorch's reference on CPU
     
