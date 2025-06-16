@@ -7,7 +7,7 @@ def add_kernel(
     x_ptr,  
     a_output_ptr,
     n_elements,  # Size of the vector
-    BLOCK_SIZE: tl.constexpr,  # Optional meta-parameters for the kernel
+    BLOCK_SIZE: tl.constexpr,
 ):
 
     pid = tl.program_id(axis=0)
