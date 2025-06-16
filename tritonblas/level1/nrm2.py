@@ -61,10 +61,10 @@ def nrm2_kernel(
     #tl.device_print("load x", x)
 
     exp = x * x
-    tl.device_print("exp", exp)
+    #tl.device_print("exp", exp)
 
     sum_of_squares = tl.sum(exp)  # sum of squares for a program's assigned chunk
-    tl.device_print("sum_of_squares", sum_of_squares)
+    #tl.device_print("sum_of_squares", sum_of_squares)
     
     tl.atomic_add(output_ptr, sum_of_squares)
 
@@ -83,5 +83,4 @@ def nrm2(x: torch.Tensor):
         BLOCK_SIZE=128
     )
     result = torch.sqrt(output)
-    print(result)
     return result
