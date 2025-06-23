@@ -4,130 +4,85 @@ import triton.language as tl
 import numpy as np
 
 
-def get_autotune_config_partial():
+def get_autotune_config():
     return [
-        triton.Config(
-            {
-                "BLOCK_SIZE_PARTIAL": 1024,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_PARTIAL": 512,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_PARTIAL": 256,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_PARTIAL": 128,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_PARTIAL": 64,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_PARTIAL": 32,
-            },
-        ),
-    ]
-
-def get_autotune_config_final():
-    return [
-        triton.Config(
-            {
-                "BLOCK_SIZE_FINAL": 256,
-            },
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_FINAL": 512,
-            },
-        ),
+        triton.Config({"BLOCK_SIZE": 1024}),
+        triton.Config({"BLOCK_SIZE": 512}),
+        triton.Config({"BLOCK_SIZE": 256}),
+        triton.Config({"BLOCK_SIZE": 128}),
+        triton.Config({"BLOCK_SIZE": 64}),
+        triton.Config({"BLOCK_SIZE": 32}),
     ]
 
 
 @triton.autotune(
-    configs=get_autotune_config_partial(),
+    configs=get_autotune_config(),
     key=["n_elements"]
 )
-
 @triton.jit
 def nrm2_partial(
     x_ptr,
     partial_ptr,
     n_elements,
-    BLOCK_SIZE_PARTIAL: tl.constexpr
+    BLOCK_SIZE: tl.constexpr
 ):
     pid = tl.program_id(axis=0)
-    block_start = pid * BLOCK_SIZE_PARTIAL
-    offsets = block_start + tl.arange(0, BLOCK_SIZE_PARTIAL)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
-    
     x = tl.load(x_ptr + offsets, mask=mask)
-    #tl.device_print("load x", x)
 
     exp = x * x
-    #tl.device_print("exp", exp)
-
-    sum_of_squares = tl.sum(exp)  # sum of squares for a program's assigned chunk
-    #tl.device_print("sum_of_squares", sum_of_squares)
+    sum_of_squares = tl.sum(exp)
     
     tl.store(partial_ptr + pid, sum_of_squares)
 
 
-@triton.autotune(
-    configs=get_autotune_config_final(),
-    key=["n_partial"]
-)
 @triton.jit
 def nrm2_final(
     partial_ptr,
     final_ptr,
     n_partial,
-    BLOCK_SIZE_FINAL: tl.constexpr
 ):
-    thread_id = tl.program_id(axis=0) * BLOCK_SIZE_FINAL + tl.arange(0, BLOCK_SIZE_FINAL)
-    mask = thread_id < n_partial
-    chunk = tl.load(partial_ptr + thread_id, mask=mask)
-
-    local_sum = tl.sum(chunk, axis=0)
-
-    tl.atomic_add(final_ptr, local_sum)
+    total = tl.zeros((), dtype=tl.float32)
+    
+    # Process partial sums one by one
+    for i in range(n_partial):
+        partial_val = tl.load(partial_ptr + i)
+        total += partial_val
+    
+    tl.store(final_ptr, total)
 
 
 def nrm2(x: torch.Tensor):
     n_elements = x.numel()
+    output = torch.zeros((1,))
 
-    output = torch.zeros((1,), device=x.device, dtype=torch.float32)
+    # allocate enough memory for the partial sums
+    min_block_size = min(config.kwargs['BLOCK_SIZE'] for config in get_autotune_config())
+    max_partial_programs = triton.cdiv(n_elements, min_block_size)
+    partial_sums = torch.zeros(max_partial_programs)
 
-    buffer = min(config.kwargs['BLOCK_SIZE_PARTIAL'] for config in get_autotune_config_partial())
-    partial_programs = triton.cdiv(n_elements, buffer)
-
-    partial_sums = torch.empty(partial_programs)
-
-    def grid_partial(META):
-        return (triton.cdiv(n_elements, META['BLOCK_SIZE_PARTIAL']),)
-    nrm2_partial[grid_partial](
+    # Capture the actual grid size used by autotuning
+    auto_grid = None
+    
+    def grid(META):
+        nonlocal auto_grid
+        auto_grid = triton.cdiv(n_elements, META['BLOCK_SIZE'])
+        return (auto_grid,)
+    
+    nrm2_partial[grid](
         x,
         partial_sums,
         n_elements,
     )
 
-    def grid_final(META):
-        return (triton.cdiv(partial_programs, META['BLOCK_SIZE_FINAL']),)
-    nrm2_final[grid_final](
+    # Process exactly the number of partial sums that were written
+    nrm2_final[(1,)](
         partial_sums,
         output,
-        partial_programs,
+        auto_grid
     )
 
-    output_val = output[0]
-    output = torch.sqrt(output_val)
-    return output
+    result = torch.sqrt(output)
+    return result
